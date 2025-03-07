@@ -1,3 +1,8 @@
+begin
+  require 'active_support/notifications'
+rescue LoadError
+end
+
 unless defined?(ActiveSupport::Notifications)
   class ActiveSupport::Notifications
     class << self
