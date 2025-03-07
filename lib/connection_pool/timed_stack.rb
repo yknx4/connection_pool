@@ -181,8 +181,10 @@ class ConnectionPool::TimedStack
   # This method must shut down all connections on the stack.
   def shutdown_connections(options = nil)
     while (conn = try_fetch_connection(options))
-      @created -= 1 unless @created == 0
-      @shutdown_block.call(conn)
+      ActiveSupport::Notifications.instrument("connection_pool:delete", {id: pool_id, created: @created}) do
+        @created -= 1 unless @created == 0
+        @shutdown_block.call(conn)
+      end
     end
   end
 
