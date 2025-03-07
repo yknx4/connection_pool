@@ -100,7 +100,7 @@ class ConnectionPool
     @available = TimedStack.new(@size, &block)
     @key = :"pool-#{@available.object_id}"
     @key_count = :"pool-#{@available.object_id}-count"
-    @pool_id = [options.fetch(:name), @key].compact.map(&:to_s).join("-").freeze
+    @pool_id = options.fetch(:name, @key).to_s.freeze
     @available.pool_id = @pool_id
     INSTANCES[self] = self if INSTANCES
   end
