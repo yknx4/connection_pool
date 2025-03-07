@@ -1,5 +1,6 @@
 require "timeout"
 require_relative "connection_pool/version"
+require_relative "connection_pool/notifications"
 
 class ConnectionPool
   class Error < ::RuntimeError; end
@@ -99,6 +100,8 @@ class ConnectionPool
     @available = TimedStack.new(@size, &block)
     @key = :"pool-#{@available.object_id}"
     @key_count = :"pool-#{@available.object_id}-count"
+    @pool_id = options[:name] || @key
+    @available.pool_id = @pool_id
     INSTANCES[self] = self if INSTANCES
   end
 
@@ -117,26 +120,30 @@ class ConnectionPool
   alias_method :then, :with
 
   def checkout(options = {})
-    if ::Thread.current[@key]
-      ::Thread.current[@key_count] += 1
-      ::Thread.current[@key]
-    else
-      ::Thread.current[@key_count] = 1
-      ::Thread.current[@key] = @available.pop(options[:timeout] || @timeout, options)
+    ActiveSupport::Notifications.instrument("connection_pool:checkout", {id: @pool_id, options:}) do
+      if ::Thread.current[@key]
+        ::Thread.current[@key_count] += 1
+        ::Thread.current[@key]
+      else
+        ::Thread.current[@key_count] = 1
+        ::Thread.current[@key] = @available.pop(options[:timeout] || @timeout, options)
+      end
     end
   end
 
   def checkin(force: false)
-    if ::Thread.current[@key]
-      if ::Thread.current[@key_count] == 1 || force
-        @available.push(::Thread.current[@key])
-        ::Thread.current[@key] = nil
-        ::Thread.current[@key_count] = nil
-      else
-        ::Thread.current[@key_count] -= 1
+    ActiveSupport::Notifications.instrument("connection_pool:checkin", {id: @pool_id, force:}) do
+      if ::Thread.current[@key]
+        if ::Thread.current[@key_count] == 1 || force
+          @available.push(::Thread.current[@key])
+          ::Thread.current[@key] = nil
+          ::Thread.current[@key_count] = nil
+        else
+          ::Thread.current[@key_count] -= 1
+        end
+      elsif !force
+        raise ConnectionPool::Error, "no connections are checked out"
       end
-    elsif !force
-      raise ConnectionPool::Error, "no connections are checked out"
     end
 
     nil

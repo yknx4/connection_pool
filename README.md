@@ -148,6 +148,66 @@ end
 cp.idle # => 1
 ```
 
+## ConnectionPool ActiveSupport::Notifications Events
+
+### 1. `connection_pool:checkout`
+   - **Description:** Fired when a connection is checked out from the pool.
+   - **Payload:**
+     - `id` (String/Symbol): The pool ID.
+     - `options` (Hash): Options used for checkout (e.g., timeout settings).
+
+---
+
+### 2. `connection_pool:checkin`
+   - **Description:** Fired when a connection is checked back into the pool.
+   - **Payload:**
+     - `id` (String/Symbol): The pool ID.
+     - `force` (Boolean): Whether the check-in was forced.
+
+---
+
+### 3. `connection_pool:push`
+   - **Description:** Fired when a connection is pushed back into the pool.
+   - **Payload:**
+     - `id` (String/Symbol): The pool ID.
+     - `options` (Hash): Additional options.
+
+---
+
+### 4. `connection_pool:pop`
+   - **Description:** Fired when a connection is retrieved from the pool.
+   - **Payload:**
+     - `id` (String/Symbol): The pool ID.
+     - `current_time` (Float): Current system time at the moment of the call.
+     - `timeout` (Float): The timeout duration for waiting for a connection.
+     - `deadline` (Float): The calculated deadline based on timeout.
+     - `created` (Integer): The number of currently created connections.
+
+---
+
+### 5. `connection_pool:shutdown`
+   - **Description:** Fired when the connection pool is being shut down.
+   - **Payload:**
+     - `id` (String/Symbol): The pool ID.
+     - `reload` (Boolean): Whether this shutdown is a reload operation.
+
+---
+
+### 6. `connection_pool:reap`
+   - **Description:** Fired when idle connections are being reaped (cleaned up).
+   - **Payload:**
+     - `id` (String/Symbol): The pool ID.
+     - `idle_seconds` (Integer/Float): The duration (in seconds) a connection must be idle before it is reaped.
+
+---
+
+### 7. `connection_pool:create`
+   - **Description:** Fired when a new connection is being created.
+   - **Payload:**
+     - `id` (String/Symbol): The pool ID.
+     - `created` (Integer): The current number of created connections.
+     - `max` (Integer): The maximum number of allowed connections in the pool.
+
 Notes
 -----
 

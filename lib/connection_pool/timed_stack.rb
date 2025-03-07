@@ -18,6 +18,7 @@
 #    #=> raises ConnectionPool::TimeoutError after 5 seconds
 class ConnectionPool::TimedStack
   attr_reader :max
+  attr_accessor :pool_id
 
   ##
   # Creates a new pool with +size+ connections that are created from the given
@@ -36,15 +37,17 @@ class ConnectionPool::TimedStack
   # Returns +obj+ to the stack. +options+ is ignored in TimedStack but may be
   # used by subclasses that extend TimedStack.
   def push(obj, options = {})
-    @mutex.synchronize do
-      if @shutdown_block
-        @created -= 1 unless @created == 0
-        @shutdown_block.call(obj)
-      else
-        store_connection obj, options
-      end
+    ActiveSupport::Notifications.instrument("connection_pool:push", {id: pool_id, options:}) do
+      @mutex.synchronize do
+        if @shutdown_block
+          @created -= 1 unless @created == 0
+          @shutdown_block.call(obj)
+        else
+          store_connection obj, options
+        end
 
-      @resource.broadcast
+        @resource.broadcast
+      end
     end
   end
   alias_method :<<, :push
@@ -62,19 +65,21 @@ class ConnectionPool::TimedStack
     timeout = options.fetch :timeout, timeout
 
     deadline = current_time + timeout
-    @mutex.synchronize do
-      loop do
-        raise ConnectionPool::PoolShuttingDownError if @shutdown_block
-        if (conn = try_fetch_connection(options))
-          return conn
+    ActiveSupport::Notifications.instrument("connection_pool:pop", {id: pool_id, current_time:, timeout:, deadline:, created: @created}) do
+      @mutex.synchronize do
+        loop do
+          raise ConnectionPool::PoolShuttingDownError if @shutdown_block
+          if (conn = try_fetch_connection(options))
+            return conn
+          end
+
+          connection = try_create(options)
+          return connection if connection
+
+          to_wait = deadline - current_time
+          raise ConnectionPool::TimeoutError, "Waited #{timeout} sec, #{length}/#{@max} available" if to_wait <= 0
+          @resource.wait(@mutex, to_wait)
         end
-
-        connection = try_create(options)
-        return connection if connection
-
-        to_wait = deadline - current_time
-        raise ConnectionPool::TimeoutError, "Waited #{timeout} sec, #{length}/#{@max} available" if to_wait <= 0
-        @resource.wait(@mutex, to_wait)
       end
     end
   end
@@ -85,34 +90,38 @@ class ConnectionPool::TimedStack
   # shutdown will raise +ConnectionPool::PoolShuttingDownError+ unless
   # +:reload+ is +true+.
   def shutdown(reload: false, &block)
-    raise ArgumentError, "shutdown must receive a block" unless block
+    ActiveSupport::Notifications.instrument("connection_pool:shutdown", {id: pool_id, reload:}) do
+      raise ArgumentError, "shutdown must receive a block" unless block
 
-    @mutex.synchronize do
-      @shutdown_block = block
-      @resource.broadcast
+      @mutex.synchronize do
+        @shutdown_block = block
+        @resource.broadcast
 
-      shutdown_connections
-      @shutdown_block = nil if reload
+        shutdown_connections
+        @shutdown_block = nil if reload
+      end
     end
   end
 
   ##
   # Reaps connections that were checked in more than +idle_seconds+ ago.
   def reap(idle_seconds, &block)
-    raise ArgumentError, "reap must receive a block" unless block
-    raise ArgumentError, "idle_seconds must be a number" unless idle_seconds.is_a?(Numeric)
-    raise ConnectionPool::PoolShuttingDownError if @shutdown_block
+    ActiveSupport::Notifications.instrument("connection_pool:reap", {id: pool_id, idle_seconds:}) do
+      raise ArgumentError, "reap must receive a block" unless block
+      raise ArgumentError, "idle_seconds must be a number" unless idle_seconds.is_a?(Numeric)
+      raise ConnectionPool::PoolShuttingDownError if @shutdown_block
 
-    idle.times do
-      conn =
-        @mutex.synchronize do
-          raise ConnectionPool::PoolShuttingDownError if @shutdown_block
+      idle.times do
+        conn =
+          @mutex.synchronize do
+            raise ConnectionPool::PoolShuttingDownError if @shutdown_block
 
-          reserve_idle_connection(idle_seconds)
-        end
-      break unless conn
+            reserve_idle_connection(idle_seconds)
+          end
+        break unless conn
 
-      block.call(conn)
+        block.call(conn)
+      end
     end
   end
 
@@ -213,9 +222,11 @@ class ConnectionPool::TimedStack
   # connections allowed has not been met.
   def try_create(options = nil)
     unless @created == @max
-      object = @create_block.call
-      @created += 1
-      object
+      ActiveSupport::Notifications.instrument("connection_pool:create", {id: pool_id, created: @created, max: @max}) do
+        object = @create_block.call
+        @created += 1
+        object
+      end
     end
   end
 end
